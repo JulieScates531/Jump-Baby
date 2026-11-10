@@ -8,15 +8,16 @@ It runs in any phone, tablet or computer browser. It has no accounts and no serv
 - **Today:** a daily checklist of chores, plus training goals for each sport that's in season.
   - Tap a chore to check it off.
   - Track practice time with a **start/stop timer**, quick **+5 / +15** buttons, or a custom number of minutes.
-  - Off-season sports can still be logged as "extra practice".
+  - **Extra training:** he can log training he does on his own with **➕ Log extra training**. He picks a sport (or "Other" and types it in, like running), adds what he worked on, then enters the minutes or uses a timer.
   - Use the arrows to look at earlier days. Today and yesterday can be edited, so a forgotten check-off can be fixed. Older days are locked unless a parent unlocks the Parent tab.
 - **Points and rewards:**
   - **+10** for finishing **100%** of the day's chores.
   - **+10** for meeting **every** training goal that day.
   - **+5 Perfect Day bonus** for doing both.
+  - **+2** for each extra training session of 10+ min, up to 3 a day. Extra time on a sport that already has a home goal that day counts toward that goal instead.
   - Streaks are counted for chores and for training, with a celebration when he hits 100%.
   - The Reward shop lets him spend points. If a PIN is set, a parent has to approve.
-- **History:** this week's points and minutes per sport, plus a 30-day log.
+- **History:** this week's points and minutes per sport, his extra-training log, and a 30-day log.
 - **Parent tab** (can be protected with a PIN):
   - Edit chores and the days they appear.
   - Plan each week: team practice days, home training days, minutes and drills per sport.
