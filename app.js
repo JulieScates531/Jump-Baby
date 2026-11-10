@@ -52,6 +52,15 @@
     return weeks;
   }
 
+  function defaultMilestones() {
+    const start = todayKey();
+    return [
+      { id: uid(), name: '7-day Perfect Streak', type: 'perfectStreak', target: 7, sport: '', bonus: 25, prize: 'Pick a movie night', start, achieved: null, given: false },
+      { id: uid(), name: '500 training minutes', type: 'minutes', target: 500, sport: '', bonus: 50, prize: '', start, achieved: null, given: false },
+      { id: uid(), name: '10 extra training sessions', type: 'extraSessions', target: 10, sport: '', bonus: 20, prize: 'New soccer ball', start, achieved: null, given: false },
+    ];
+  }
+
   // ---------- default data ----------
   function defaults() {
     return {
@@ -85,6 +94,7 @@
         { id: uid(), name: 'New sports gear', cost: 300 },
       ],
       days: {},          // 'YYYY-MM-DD' -> { plan:{chores:[id], sports:[{id,goal,practice,drills}]}, chores:{id:true}, practice:{sportId:true}, sessions:[{id,sport,min,ts}] }
+      milestones: defaultMilestones(),
       redemptions: [],   // {id, name, cost, date}
       timer: null,       // {sport, start, day}
       celebrated: {},    // 'YYYY-MM-DD' -> {chores:bool, training:bool}
@@ -102,6 +112,7 @@
     }
     migrate();
     if (state.points.extra == null) state.points.extra = 2;
+    if (!state.milestones) state.milestones = defaultMilestones();
   }
   // v2: soccer and baseball became year-round goals. Only update them if the
   // parent hasn't customized their seasons.
@@ -184,7 +195,9 @@
 
   function sportMet(k, p) {
     const d = state.days[k];
-    if (p.practice) return !!(d && d.practice && d.practice[p.id]);
+    const went = !!(d && d.practice && d.practice[p.id]);
+    // A team practice (scheduled or not) always meets that sport's goal for the day.
+    if (p.practice || went) return went;
     return minutes(k, p.id) >= p.goal;
   }
   // Each day keeps a snapshot of its plan so changing settings later doesn't rewrite history.
@@ -217,32 +230,98 @@
     let pts = 0;
     if (choresDone) pts += state.points.chores;
     if (trainingDone) pts += state.points.training;
-    if (choresDone && trainingDone) pts += state.points.perfectDay;
+    // Perfect day: everything scheduled that day (chores and training) is at 100%.
+    const anyPlanned = plan.chores.length > 0 || plan.sports.length > 0;
+    const perfect = anyPlanned && (!plan.chores.length || choresDone) && (!plan.sports.length || trainingDone);
+    if (perfect) pts += state.points.perfectDay;
     const extraCount = extraPointSessions(k, plan).length;
     pts += extraCount * state.points.extra;
     const totalMin = d ? d.sessions.reduce((a, s) => a + s.min, 0) : 0;
-    return { plan, choresDoneCount, sportsDoneCount, choresDone, trainingDone, pts, totalMin, extraCount };
+    return { plan, choresDoneCount, sportsDoneCount, choresDone, trainingDone, perfect, anyPlanned, pts, totalMin, extraCount };
   }
   function totalEarned() {
     return Object.keys(state.days).reduce((a, k) => a + status(k).pts, 0);
   }
   function balance() {
-    return totalEarned() - state.redemptions.reduce((a, r) => a + r.cost, 0);
+    return totalEarned() + milestoneBonus() - state.redemptions.reduce((a, r) => a + r.cost, 0);
   }
   // Streak of consecutive days that hit 100%. Days with nothing scheduled are skipped.
   // Today only counts once it's done (so an unfinished today doesn't break the streak).
-  function streak(kind) {
+  // kind: 'chores' | 'training' | 'perfect'. `since` stops counting at that date.
+  function streak(kind, since) {
     let k = todayKey(), n = 0;
     for (let i = 0; i < 400; i++, k = addDays(k, -1)) {
+      if (since && k < since) break;
       const st = status(k);
-      const planned = kind === 'chores' ? st.plan.chores.length : st.plan.sports.length;
-      const done = kind === 'chores' ? st.choresDone : st.trainingDone;
+      const planned = kind === 'chores' ? st.plan.chores.length : kind === 'training' ? st.plan.sports.length : st.anyPlanned;
+      const done = kind === 'chores' ? st.choresDone : kind === 'training' ? st.trainingDone : st.perfect;
       if (!planned) continue;
       if (done) n++;
       else if (i === 0) continue;
       else break;
     }
     return n;
+  }
+
+  // ---------- milestones (parent-created goals with rewards) ----------
+  const MS_TYPES = {
+    perfectStreak: { label: 'Perfect-day streak', unit: 'days in a row', sport: false },
+    perfectDays: { label: 'Perfect days (total)', unit: 'perfect days', sport: false },
+    choreStreak: { label: 'Chore streak', unit: 'days in a row', sport: false },
+    trainingStreak: { label: 'Training-goal streak', unit: 'days in a row', sport: false },
+    minutes: { label: 'Training minutes', unit: 'minutes', sport: true },
+    extraSessions: { label: 'Extra training sessions', unit: 'sessions', sport: true },
+    practices: { label: 'Team practices attended', unit: 'practices', sport: true },
+  };
+  // All training entries: sessions plus team-practice check-offs. Each entry:
+  // { day, kind:'home'|'extra'|'practice', sport, label, min, note, drills, id }
+  function allEntries() {
+    const out = [];
+    Object.keys(state.days).forEach(k => {
+      const d = state.days[k];
+      d.sessions.forEach(x => out.push({
+        day: k, id: x.id, kind: x.kind || (x.extra ? 'extra' : 'home'), sport: x.sport,
+        label: sessionLabel(x), min: x.min, note: x.note === 'timer' ? '' : (x.note || ''), drills: x.drills || '', ts: x.ts,
+      }));
+      Object.keys(d.practice || {}).forEach(sp => {
+        if (!d.sessions.some(x => x.kind === 'practice' && x.sport === sp)) {
+          out.push({ day: k, id: 'p:' + sp, kind: 'practice', sport: sp, label: sportById(sp).name, min: 0, note: '', drills: '', ts: dateOf(k).getTime() });
+        }
+      });
+    });
+    return out.sort((a, b) => b.day.localeCompare(a.day) || b.ts - a.ts);
+  }
+  function milestoneProgress(m) {
+    const since = m.start;
+    const inRange = e => e.day >= since && (!m.sport || e.sport === m.sport);
+    switch (m.type) {
+      case 'perfectStreak': return streak('perfect', since);
+      case 'choreStreak': return streak('chores', since);
+      case 'trainingStreak': return streak('training', since);
+      case 'perfectDays': return Object.keys(state.days).filter(k => k >= since && status(k).perfect).length;
+      case 'minutes': return allEntries().filter(inRange).reduce((a, e) => a + e.min, 0);
+      case 'extraSessions': return allEntries().filter(e => e.kind === 'extra' && inRange(e)).length;
+      case 'practices': return allEntries().filter(e => e.kind === 'practice' && inRange(e)).length;
+    }
+    return 0;
+  }
+  function milestoneBonus() {
+    return (state.milestones || []).filter(m => m.achieved).reduce((a, m) => a + (m.bonus || 0), 0);
+  }
+  function milestoneText(m) {
+    const t = MS_TYPES[m.type];
+    const sp = m.sport ? ' of ' + (m.sport === 'other' ? 'other training' : sportById(m.sport).name) : '';
+    return `${m.target} ${t.unit}${sp}`;
+  }
+  function checkMilestones() {
+    (state.milestones || []).forEach(m => {
+      if (m.achieved || milestoneProgress(m) < m.target) return;
+      m.achieved = todayKey();
+      setTimeout(() => {
+        celebrate(['🏅', '🎉', '🏆', '⭐', '🥇']);
+        toast(`🏅 Milestone reached: ${m.name}!${m.bonus ? ` +${m.bonus} points` : ''}${m.prize ? ` · Prize: ${m.prize}` : ''}`);
+      }, 1200);
+    });
   }
 
   // ---------- ui state ----------
@@ -287,10 +366,11 @@
       celebrate(['🏆', '⚽', '⚾', '🥋', '🏀', '💪']);
       toast(`${name}training goals smashed! +${state.points.training} points`);
     }
-    if (st.choresDone && st.trainingDone && !c.perfect) {
+    if (st.perfect && !c.perfect) {
       c.perfect = true;
-      setTimeout(() => toast(`PERFECT DAY! Bonus +${state.points.perfectDay} 🏆`), 2700);
+      setTimeout(() => toast(`PERFECT DAY! Bonus +${state.points.perfectDay} 🏆 · 🔥 ${streak('perfect')}-day streak`), 2700);
     }
+    checkMilestones();
     save();
   }
 
@@ -319,6 +399,7 @@
         <div class="date">${label}<small>${dt.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</small></div>
         <button class="iconbtn" data-act="next" aria-label="Next day" ${isToday ? 'disabled' : ''}>›</button>
       </div>
+      ${streakHero(k, st)}
       <div class="summary">
         <div class="stat ${st.choresDone ? 'done' : ''}">
           <div class="label">Chores</div>
@@ -367,6 +448,34 @@
 
     $view.innerHTML = html;
     if (state.timer) startTick();
+  }
+
+  function streakHero(k, st) {
+    const n = streak('perfect');
+    const best = bestPerfectStreak();
+    const next = (state.milestones || []).filter(m => !m.achieved && m.type === 'perfectStreak').sort((a, b) => a.target - b.target)[0];
+    let sub;
+    if (k !== todayKey()) sub = st.perfect ? 'This was a perfect day! ✅' : 'All chores + all training goals at 100% = a perfect day';
+    else if (st.perfect) sub = 'Today is a perfect day! Keep it going tomorrow!';
+    else sub = n ? 'Finish 100% of today\'s chores and training to keep your streak!' : 'Finish 100% of chores and training today to start a streak!';
+    return `<div class="hero ${n ? 'hot' : ''}">
+      <div class="hero-num">🔥 ${n}</div>
+      <div class="grow"><div class="hero-title">${n === 1 ? 'day' : 'days'} perfect streak</div>
+        <div class="small">${sub}</div>
+        <div class="small" style="opacity:.85;margin-top:2px">Best: ${best} ${best === 1 ? 'day' : 'days'}${next ? ` · Next milestone: ${next.target} days (${esc(next.name)})` : ''}</div></div>
+    </div>`;
+  }
+  function bestPerfectStreak() {
+    const keys = Object.keys(state.days).sort();
+    if (!keys.length) return 0;
+    let best = 0, cur = 0;
+    for (let k = keys[0]; k <= todayKey(); k = addDays(k, 1)) {
+      const st = status(k);
+      if (!st.anyPlanned) continue;
+      if (st.perfect) best = Math.max(best, ++cur);
+      else if (k !== todayKey()) cur = 0;
+    }
+    return best;
   }
 
   // ---------- extra (unscheduled) training, logged by him ----------
@@ -430,6 +539,12 @@
       <p class="muted small" style="margin:6px 0">No home ${esc(s.name.toLowerCase())} training today. Going to practice counts as your goal!</p>
       <button class="chore ${went ? 'checked' : ''}" data-act="practice" data-id="${s.id}" ${editable ? '' : 'disabled'} style="margin:0">
         <span class="box">${went ? '✓' : ''}</span><span>I went to ${esc(s.name.toLowerCase())} practice</span></button>
+      ${went ? (() => {
+        const ps = d.sessions.filter(x => x.kind === 'practice' && x.sport === s.id);
+        const m = ps.reduce((a, x) => a + x.min, 0);
+        return `<div class="row" style="margin-top:8px"><span class="muted small grow">${m ? `⏱ ${fmtMin(m)} of practice logged` : 'How long was practice? (optional)'}</span>
+          ${editable ? `<button class="btn" data-act="practiceMin" data-sport="${s.id}">${m ? 'Change' : '+ Add time'}</button>` : ''}</div>`;
+      })() : ''}
     </div>`;
   }
 
@@ -473,7 +588,11 @@
     if (!(min > 0)) return;
     const before = extraPointSessions(k).length;
     const x = { id: uid(), sport, min: Math.round(min), ts: Date.now(), note: note || '' };
-    if (extra) { x.extra = true; if (extra.label) x.label = extra.label; }
+    if (extra) { x.extra = true; x.kind = 'extra'; if (extra.label) x.label = extra.label; }
+    else {
+      const pl = day(k, true).plan.sports.find(p => p.id === sport && !p.practice);
+      if (pl && pl.drills) x.drills = pl.drills;
+    }
     day(k, true).sessions.push(x);
     save();
     if (extra && extraPointSessions(k).length > before) {
@@ -489,8 +608,9 @@
     let html = `<section class="card" style="text-align:center">
       <div class="muted">Points to spend</div>
       <div style="font-size:3rem;font-weight:800">⭐ ${bal}</div>
-      <div class="muted small">Earned all-time: ${totalEarned()} · Spent: ${totalEarned() - bal}</div>
+      <div class="muted small">Earned all-time: ${totalEarned() + milestoneBonus()} · Spent: ${totalEarned() + milestoneBonus() - bal}</div>
     </section>
+    ${milestonesHtml()}
     <section class="card"><h2>🎁 Reward shop</h2>`;
     if (!state.rewards.length) html += `<div class="empty">No rewards yet. A parent can add some in the Parent tab.</div>`;
     state.rewards.slice().sort((a, b) => a.cost - b.cost).forEach(r => {
@@ -509,71 +629,195 @@
     <section class="card"><h2>How to earn points</h2>
       <p>✅ 100% of chores in a day: <b>+${state.points.chores}</b></p>
       <p>🏅 Every training goal in a day: <b>+${state.points.training}</b></p>
-      <p>🏆 Both on the same day (Perfect Day): <b>+${state.points.perfectDay}</b> bonus</p>
+      <p>🔥 Perfect Day (100% of everything scheduled): <b>+${state.points.perfectDay}</b> bonus</p>
+      <p>🏅 Reach a milestone: bonus points and/or a prize (see Milestones above)</p>
       <p>🚀 Extra training on your own (${EXTRA_MIN}+ min, up to ${EXTRA_MAX} a day): <b>+${state.points.extra}</b> each</p>
     </section>`;
     $view.innerHTML = html;
   }
 
+  function milestonesHtml() {
+    const ms = state.milestones || [];
+    if (!ms.length) return '';
+    const open = ms.filter(m => !m.achieved), won = ms.filter(m => m.achieved);
+    const card = m => {
+      const prog = Math.min(m.target, milestoneProgress(m));
+      const pct = Math.round(prog / m.target * 100);
+      const reward = [m.bonus ? `⭐ +${m.bonus} points` : '', m.prize ? `🎁 ${esc(m.prize)}` : ''].filter(Boolean).join(' · ');
+      return `<div class="ms ${m.achieved ? 'won' : ''}">
+        <div class="ms-top"><b>${m.achieved ? '🏅' : '🎯'} ${esc(m.name)}</b><span class="small muted">${m.achieved ? 'Done ' + shortDay(m.achieved) : `${prog} / ${m.target}`}</span></div>
+        <div class="small muted">${esc(milestoneText(m))}${MS_TYPES[m.type].unit === 'days in a row' ? '' : ` · counting since ${shortDay(m.start)}`}</div>
+        ${m.achieved ? '' : `<div class="progress"><div style="width:${pct}%"></div></div>`}
+        <div class="small" style="margin-top:4px">Reward: ${reward || '—'}</div>
+        ${m.achieved && m.prize ? (m.given ? `<div class="small" style="margin-top:4px">✅ Prize given</div>`
+          : `<button class="btn" style="margin-top:8px" data-act="msGiven" data-id="${m.id}">Parent: mark prize as given</button>`) : ''}
+      </div>`;
+    };
+    return `<section class="card"><h2>🏅 Milestones</h2>
+      ${open.map(card).join('') || '<div class="empty">All milestones reached! Ask a parent for new ones.</div>'}
+      ${won.length ? `<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-weight:600">Reached (${won.length})</summary><div style="margin-top:8px">${won.slice().reverse().map(card).join('')}</div></details>` : ''}
+    </section>`;
+  }
+
   // ---------- HISTORY ----------
+  let hist = { period: 'week', sport: 'all', kind: 'all', q: '', limit: 60 };
+  let histAddOpen = false;
+  let addForm = null;
+  const KIND_LABEL = { home: 'Home training', extra: 'Extra', practice: 'Team practice' };
+  const PERIODS = [['week', 'This week'], ['lastweek', 'Last week'], ['month', 'This month'], ['30', '30 days'], ['90', '90 days'], ['all', 'All time']];
+
+  function histRange() {
+    const t = todayKey(), ws = weekStart(t);
+    switch (hist.period) {
+      case 'week': return [ws, t];
+      case 'lastweek': return [addDays(ws, -7), addDays(ws, -1)];
+      case 'month': return [t.slice(0, 8) + '01', t];
+      case '30': return [addDays(t, -29), t];
+      case '90': return [addDays(t, -89), t];
+      default: {
+        const keys = Object.keys(state.days).sort();
+        return [keys[0] && keys[0] < t ? keys[0] : t, t];
+      }
+    }
+  }
+  const sportChoices = () => state.sports.map(s => [s.id, s.emoji + ' ' + s.name]).concat([['other', '🏅 Other']]);
+  const shortDay = k => { const dt = dateOf(k); return `${DOW[dt.getDay()]} ${dt.getMonth() + 1}/${dt.getDate()}`; };
+
   function renderHistory() {
-    const t = todayKey();
-    // This week (Sunday start) totals per sport
-    const start = weekStart(t);
-    const weekTotals = {};
-    let weekPts = 0, weekChoreDays = 0, weekTrainDays = 0, weekExtraMin = 0, weekExtraN = 0, otherMin = 0;
-    for (let k = start; k <= t; k = addDays(k, 1)) {
-      const st = status(k);
-      weekPts += st.pts;
-      if (st.choresDone) weekChoreDays++;
-      if (st.trainingDone) weekTrainDays++;
-      state.sports.forEach(s => { weekTotals[s.id] = (weekTotals[s.id] || 0) + minutes(k, s.id); });
-      otherMin += minutes(k, 'other');
-      (state.days[k] ? state.days[k].sessions : []).forEach(x => { if (x.extra) { weekExtraMin += x.min; weekExtraN++; } });
-    }
-    if (otherMin) weekTotals.other = otherMin;
-    // His extra-training log: most recent first, last 60 days.
-    const log = [];
-    for (let i = 0; i < 60; i++) {
-      const k = addDays(t, -i);
-      (state.days[k] ? state.days[k].sessions : []).filter(x => x.extra).slice().reverse().forEach(x => log.push([k, x]));
-    }
-    const longest = log.reduce((a, [, x]) => Math.max(a, x.min), 0);
-    let html = `<section class="card"><h2>📊 This week</h2>
+    const chipRow = (key, opts) => `<div class="chips">${opts.map(([v, l]) =>
+      `<button class="chip ${hist[key] === v ? 'on' : ''}" data-act="hf" data-k="${key}" data-v="${v}">${esc(l)}</button>`).join('')}</div>`;
+    $view.innerHTML = `
+      <section class="card"><h2>🔎 Training log</h2>
+        <div class="filters">
+          ${chipRow('period', PERIODS)}
+          ${chipRow('sport', [['all', 'All sports']].concat(sportChoices()))}
+          ${chipRow('kind', [['all', 'All types'], ['home', '🏠 Home training'], ['extra', '🚀 Extra'], ['practice', '🏟 Team practice']])}
+          <input type="text" id="histQ" placeholder="Search drills & notes (e.g. juggling)" value="${esc(hist.q)}">
+        </div>
+      </section>
+      ${addEntryHtml()}
+      <div id="histResults"></div>`;
+    renderHistResults();
+  }
+
+  function renderHistResults() {
+    const [from, to] = histRange();
+    const q = hist.q.trim().toLowerCase();
+    const entries = allEntries().filter(e => e.day >= from && e.day <= to
+      && (hist.sport === 'all' || e.sport === hist.sport)
+      && (hist.kind === 'all' || e.kind === hist.kind)
+      && (!q || (e.label + ' ' + e.note + ' ' + e.drills).toLowerCase().includes(q)));
+    const totalMin = entries.reduce((a, e) => a + e.min, 0);
+    const days = new Set(entries.map(e => e.day)).size;
+    const spanDays = Math.round((dateOf(to) - dateOf(from)) / 864e5) + 1;
+    const count = kind => entries.filter(e => e.kind === kind).length;
+
+    // Minutes by sport
+    const bySport = {};
+    entries.forEach(e => { bySport[e.sport] = (bySport[e.sport] || 0) + e.min; });
+    const sportRows = sportChoices().filter(([id]) => bySport[id] !== undefined || (hist.sport === 'all' && id !== 'other'));
+    const maxSport = Math.max(1, ...Object.values(bySport));
+
+    // Weekly breakdown (Monday weeks)
+    const weeks = [];
+    for (let w = weekStart(to); w >= weekStart(from) && weeks.length < 52; w = addDays(w, -7)) weeks.push(w);
+    const cols = hist.sport === 'all' ? sportChoices().filter(([id]) => id !== 'other' || bySport.other) : sportChoices().filter(([id]) => id === hist.sport);
+    const wk = {};
+    entries.forEach(e => { const w = weekStart(e.day); wk[w] = wk[w] || {}; wk[w][e.sport] = (wk[w][e.sport] || 0) + e.min; wk[w].total = (wk[w].total || 0) + e.min; });
+
+    let html = `<section class="card"><h2>📊 Summary <span class="right">${shortDay(from)} – ${shortDay(to)}</span></h2>
       <div class="summary">
-        <div class="stat"><div class="label">Points earned</div><div class="value">⭐ ${weekPts}</div></div>
-        <div class="stat"><div class="label">100% chore days</div><div class="value">${weekChoreDays}</div></div>
-        <div class="stat"><div class="label">Training goal days</div><div class="value">${weekTrainDays}</div></div>
-        <div class="stat"><div class="label">Total training</div><div class="value">${fmtMin(Object.values(weekTotals).reduce((a, b) => a + b, 0))}</div></div>
-        <div class="stat"><div class="label">Extra sessions</div><div class="value">🚀 ${weekExtraN}</div></div>
-        <div class="stat"><div class="label">Extra training time</div><div class="value">${fmtMin(weekExtraMin)}</div></div>
+        <div class="stat"><div class="label">Training time</div><div class="value">${fmtMin(totalMin)}</div></div>
+        <div class="stat"><div class="label">Avg per week</div><div class="value">${fmtMin(Math.round(totalMin / Math.max(1, spanDays / 7)))}</div></div>
+        <div class="stat"><div class="label">🏠 Home sessions</div><div class="value">${count('home')}</div></div>
+        <div class="stat"><div class="label">🚀 Extra sessions</div><div class="value">${count('extra')}</div></div>
+        <div class="stat"><div class="label">🏟 Team practices</div><div class="value">${count('practice')}</div></div>
+        <div class="stat"><div class="label">Days trained</div><div class="value">${days}</div></div>
       </div>
-      <table><tr><th>Sport</th><th class="c">Minutes this week</th></tr>
-      ${state.sports.map(s => `<tr><td>${esc(s.emoji)} ${esc(s.name)}</td><td class="c">${fmtMin(weekTotals[s.id] || 0)}</td></tr>`).join('')}
-      ${otherMin ? `<tr><td>🏅 Other</td><td class="c">${fmtMin(otherMin)}</td></tr>` : ''}</table>
+      <table><tr><th>Sport</th><th></th><th class="c">Minutes</th></tr>
+      ${sportRows.map(([id, l]) => `<tr><td style="white-space:nowrap">${esc(l)}</td>
+        <td style="width:45%"><div class="progress" style="margin:0"><div style="width:${Math.round((bySport[id] || 0) / maxSport * 100)}%"></div></div></td>
+        <td class="c">${fmtMin(bySport[id] || 0)}</td></tr>`).join('')}</table>
     </section>
-    <section class="card"><h2>🚀 My extra training log</h2>
-      ${log.length ? `<p class="muted small" style="margin-top:0">${log.length} sessions · ${fmtMin(log.reduce((a, [, x]) => a + x.min, 0))} total · longest ${fmtMin(longest)} (last 60 days)</p>
-      <table><tr><th>Day</th><th>Training</th><th class="c">Min</th></tr>
-      ${log.slice(0, 40).map(([k, x]) => { const dt = dateOf(k); return `<tr class="clickable" data-act="goto" data-day="${k}"><td>${DOW[dt.getDay()]} ${dt.getMonth() + 1}/${dt.getDate()}</td>
-        <td>${esc(sessionEmoji(x))} ${esc(sessionLabel(x))}${x.note ? `<div class="muted small">${esc(x.note)}</div>` : ''}</td><td class="c">${x.min}</td></tr>`; }).join('')}</table>`
-      : `<div class="empty">No extra training yet. Tap "Log extra training" on the Today screen!</div>`}
-    </section>
-    <section class="card"><h2>📅 Last 30 days</h2>
-      <p class="muted small">Tap a day to see it.</p>
-      <table><tr><th>Day</th><th class="c">Chores</th><th class="c">Training</th><th class="c">Min</th><th class="c">⭐</th></tr>`;
-    for (let i = 0; i < 30; i++) {
-      const k = addDays(t, -i), st = status(k), dt = dateOf(k);
+
+    <section class="card"><h2>📆 Minutes each week</h2><div class="scroll-x">
+      <table><tr><th>Week of</th>${cols.map(([, l]) => `<th class="c">${esc(l.split(' ')[0])}</th>`).join('')}<th class="c">Total</th></tr>
+      ${weeks.map(w => `<tr><td style="white-space:nowrap">${shortDay(w).slice(4)}</td>${cols.map(([id]) => `<td class="c">${(wk[w] && wk[w][id]) || ''}</td>`).join('')}
+        <td class="c"><b>${wk[w] ? fmtMin(wk[w].total) : '–'}</b></td></tr>`).join('')}
+      </table></div></section>
+
+    <section class="card"><h2>📝 All entries <span class="right">${entries.length}</span></h2>`;
+    if (!entries.length) html += `<div class="empty">Nothing matches these filters.</div>`;
+    entries.slice(0, hist.limit).forEach(e => {
+      const sp = sportById(e.sport);
+      html += `<div class="log-entry">
+        <span class="emoji">${esc(e.sport === 'other' ? '🏅' : sp.emoji)}</span>
+        <div class="grow"><div><b>${esc(e.label)}</b> <span class="tag ${e.kind}">${KIND_LABEL[e.kind]}</span></div>
+          ${e.drills ? `<div class="small">📋 ${esc(e.drills)}</div>` : ''}
+          ${e.note ? `<div class="small">✏️ ${esc(e.note)}</div>` : ''}
+          <div class="when"><a href="#" data-act="goto" data-day="${e.day}">${shortDay(e.day)}</a></div></div>
+        <span class="min">${e.min ? e.min + ' min' : '✓'}</span>
+        ${canEdit(e.day) ? `<button class="del" data-act="delEntry" data-day="${e.day}" data-id="${e.id}" data-sport="${e.sport}" aria-label="Remove">✕</button>` : ''}
+      </div>`;
+    });
+    if (entries.length > hist.limit) html += `<button class="btn" style="width:100%;margin-top:10px" data-act="histMore">Show more</button>`;
+    html += `</section>`;
+
+    // Daily results
+    html += `<section class="card"><h2>✅ Daily results</h2>
+      <p class="muted small" style="margin-top:0">Tap a day to open it.</p>
+      <table><tr><th>Day</th><th class="c">Chores</th><th class="c">Training</th><th class="c">Perfect</th><th class="c">⭐</th></tr>`;
+    for (let k = to, i = 0; k >= from && i < 90; k = addDays(k, -1), i++) {
+      const st = status(k);
       const cell = (done, n, total) => total ? (done ? '✅' : `${n}/${total}`) : '–';
-      html += `<tr class="clickable" data-act="goto" data-day="${k}">
-        <td>${DOW[dt.getDay()]} ${dt.getMonth() + 1}/${dt.getDate()}</td>
+      html += `<tr class="clickable" data-act="goto" data-day="${k}"><td>${shortDay(k)}</td>
         <td class="c">${cell(st.choresDone, st.choresDoneCount, st.plan.chores.length)}</td>
         <td class="c">${cell(st.trainingDone, st.sportsDoneCount, st.plan.sports.length)}</td>
-        <td class="c">${st.totalMin || ''}</td>
-        <td class="c">${st.pts || ''}</td></tr>`;
+        <td class="c">${st.perfect ? '🔥' : ''}</td><td class="c">${st.pts || ''}</td></tr>`;
     }
     html += `</table></section>`;
-    $view.innerHTML = html;
+    document.getElementById('histResults').innerHTML = html;
+  }
+
+  function addEntryHtml() {
+    if (!histAddOpen) return `<button class="btn primary" style="width:100%;margin-bottom:14px" data-act="addOpen">➕ Add a training entry</button>`;
+    const f = addForm;
+    const min = parentUnlocked ? '' : addDays(todayKey(), -1);
+    const sports = sportChoices().filter(([id]) => id !== 'other' || f.kind === 'extra');
+    return `<section class="card"><h2>➕ Add a training entry</h2>
+      <div class="field"><label>Day</label><input type="date" data-af="date" value="${f.date}" max="${todayKey()}" ${min ? `min="${min}"` : ''}>
+        ${parentUnlocked ? '' : '<span class="muted small">Kids can add today or yesterday. A parent can unlock the Parent tab to add older days.</span>'}</div>
+      <div class="field"><label>Type</label><div class="chips" style="margin:0">${[['home', '🏠 Home training'], ['extra', '🚀 Extra'], ['practice', '🏟 Team practice']].map(([v, l]) =>
+        `<button class="chip ${f.kind === v ? 'on' : ''}" data-act="af" data-k="kind" data-v="${v}">${l}</button>`).join('')}</div></div>
+      <div class="field"><label>Sport</label><div class="chips" style="margin:0">${sports.map(([v, l]) =>
+        `<button class="chip ${f.sport === v ? 'on' : ''}" data-act="af" data-k="sport" data-v="${v}">${esc(l)}</button>`).join('')}</div></div>
+      ${f.sport === 'other' && f.kind === 'extra' ? `<div class="field"><input type="text" data-af="label" value="${esc(f.label)}" placeholder="What did you do?"></div>` : ''}
+      <div class="field"><label>Minutes${f.kind === 'practice' ? ' (optional)' : ''}</label><input type="number" min="0" max="600" data-af="min" value="${f.min || ''}"></div>
+      <div class="field"><label>Drills / what you worked on</label><input type="text" data-af="note" value="${esc(f.note)}" placeholder="e.g. 50 juggles, wall passes"></div>
+      <div class="actions"><button class="btn good" data-act="addSave">✓ Save entry</button><button class="btn" data-act="addCancel">Cancel</button></div>
+    </section>`;
+  }
+
+  function saveAddForm() {
+    const f = addForm;
+    if (!f.date || f.date > todayKey()) { toast('Pick a day (not in the future)'); return false; }
+    if (!canEdit(f.date)) { toast('Only a parent can add entries for that day'); return false; }
+    if (!f.sport) { toast('Pick a sport'); return false; }
+    if (f.sport === 'other' && !f.label.trim()) { toast('Type what you did'); return false; }
+    const n = Math.round(Number(f.min) || 0);
+    if (n < 0 || n > 600 || (f.kind !== 'practice' && !n)) { toast('Enter the minutes (1–600)'); return false; }
+    const d = day(f.date, true);
+    if (f.kind === 'practice') {
+      d.practice = d.practice || {};
+      d.practice[f.sport] = true;
+      d.sessions = d.sessions.filter(x => !(x.kind === 'practice' && x.sport === f.sport));
+      if (n) d.sessions.push({ id: uid(), sport: f.sport, kind: 'practice', min: n, ts: Date.now(), note: f.note.trim() });
+      save(); checkCelebrate(f.date);
+    } else {
+      addSession(f.date, f.sport, n, f.note.trim(), f.kind === 'extra' ? { label: f.sport === 'other' ? f.label.trim() : '' } : null);
+    }
+    toast('Entry saved ✓');
+    return true;
   }
 
   // ---------- PARENT ----------
@@ -642,6 +886,30 @@
         <button class="btn danger" data-act="delReward" data-id="${r.id}" aria-label="Delete">🗑</button></div></div>`).join('')}
       <div class="row"><input type="text" class="grow" id="newReward" placeholder="New reward…">
       <input type="number" class="num" id="newRewardCost" placeholder="pts" min="1"><button class="btn primary" data-act="addReward">Add</button></div>
+    </section>
+
+    <section class="card"><h2>🏅 Milestones</h2>
+      <p class="muted small">Set bigger goals with a reward. Bonus points are added automatically when he reaches one; prizes show up for you to hand out. Totals count from the day the milestone is created.</p>
+      ${(state.milestones || []).map(m => `<div class="editor-item"><div class="row">
+        <div class="grow"><b>${esc(m.name)}</b><div class="small muted">${esc(MS_TYPES[m.type].label)}: ${esc(milestoneText(m))}
+          · ${m.achieved ? '🏅 reached ' + shortDay(m.achieved) : `${milestoneProgress(m)} so far`}</div>
+          <div class="small">Reward: ${[m.bonus ? '+' + m.bonus + ' pts' : '', m.prize ? esc(m.prize) : ''].filter(Boolean).join(' · ') || '—'}</div></div>
+        ${m.achieved ? `<button class="btn" data-act="msRestart" data-id="${m.id}" title="Start again from today">↻</button>` : ''}
+        <button class="btn danger" data-act="delMs" data-id="${m.id}" aria-label="Delete">🗑</button></div></div>`).join('')}
+      <div class="editor-item">
+        <div class="field"><label>New milestone name</label><input type="text" id="msName" placeholder="e.g. 2 weeks of perfect days"></div>
+        <div class="row">
+          <div class="field grow"><label>Type</label><select id="msType">${Object.entries(MS_TYPES).map(([v, t]) => `<option value="${v}">${t.label}</option>`).join('')}</select></div>
+          <div class="field" style="width:100px"><label>Target</label><input type="number" id="msTarget" min="1" placeholder="14"></div>
+        </div>
+        <div class="field"><label>Sport (for minutes / sessions / practices)</label><select id="msSport"><option value="">All sports</option>
+          ${sportChoices().map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></div>
+        <div class="row">
+          <div class="field" style="width:110px"><label>Bonus points</label><input type="number" id="msBonus" min="0" placeholder="25"></div>
+          <div class="field grow"><label>Prize (optional)</label><input type="text" id="msPrize" placeholder="e.g. New cleats"></div>
+        </div>
+        <button class="btn primary" data-act="addMs">Add milestone</button>
+      </div>
     </section>
 
     <section class="card"><h2>🎯 Adjust points</h2>
@@ -733,7 +1001,7 @@
     switch (act) {
       case 'prev': viewDay = addDays(viewDay, -1); break;
       case 'next': if (viewDay < todayKey()) viewDay = addDays(viewDay, 1); break;
-      case 'goto': viewDay = el.dataset.day; tab = 'today'; window.scrollTo(0, 0); break;
+      case 'goto': e.preventDefault(); viewDay = el.dataset.day; tab = 'today'; window.scrollTo(0, 0); break;
       case 'chore': {
         const d = day(k, true);
         if (d.chores[id]) delete d.chores[id]; else d.chores[id] = true;
@@ -742,7 +1010,10 @@
       case 'practice': {
         const d = day(k, true);
         d.practice = d.practice || {};
-        if (d.practice[id]) delete d.practice[id]; else d.practice[id] = true;
+        if (d.practice[id]) {
+          delete d.practice[id];
+          d.sessions = d.sessions.filter(x => !(x.kind === 'practice' && x.sport === id));
+        } else d.practice[id] = true;
         save(); checkCelebrate(k); break;
       }
       case 'extraOpen': extraOpen = true; extraForm = { sport: '', label: '', min: 0, note: '' }; break;
@@ -762,6 +1033,38 @@
         if (!a) return;
         state.timer = { sport: a.sport, label: a.label, note: a.note, extra: true, start: Date.now(), day: todayKey() };
         save(); break;
+      }
+      case 'hf': hist[el.dataset.k] = el.dataset.v; hist.limit = 60; break;
+      case 'histMore': hist.limit += 100; renderHistResults(); return;
+      case 'addOpen': histAddOpen = true; addForm = { date: todayKey(), kind: 'extra', sport: '', label: '', min: 0, note: '' }; break;
+      case 'addCancel': histAddOpen = false; break;
+      case 'af':
+        addForm[el.dataset.k] = el.dataset.v;
+        if (addForm.kind !== 'extra' && addForm.sport === 'other') addForm.sport = '';
+        break;
+      case 'addSave': if (saveAddForm()) histAddOpen = false; break;
+      case 'delEntry': {
+        const dk = el.dataset.day, d = state.days[dk];
+        if (!d || !confirm('Remove this entry?')) return;
+        if (id.startsWith('p:')) { if (d.practice) delete d.practice[el.dataset.sport]; }
+        else {
+          const x = d.sessions.find(y => y.id === id);
+          d.sessions = d.sessions.filter(y => y.id !== id);
+          // Removing the only record of a team practice also un-checks it.
+          if (x && x.kind === 'practice' && d.practice) delete d.practice[x.sport];
+        }
+        save(); break;
+      }
+      case 'practiceMin': {
+        const sp = el.dataset.sport;
+        const v = prompt(`How many minutes was ${sportById(sp).name} practice?`);
+        if (v === null) return;
+        const n = Math.round(Number(v));
+        if (!(n >= 0 && n <= 600)) { toast('Enter minutes between 0 and 600'); return; }
+        const d = day(k, true);
+        d.sessions = d.sessions.filter(x => !(x.kind === 'practice' && x.sport === sp));
+        if (n > 0) d.sessions.push({ id: uid(), sport: sp, kind: 'practice', min: n, ts: Date.now(), note: '' });
+        save(); checkCelebrate(k); break;
       }
       case 'start':
         state.timer = { sport: el.dataset.sport, start: Date.now(), day: todayKey() };
@@ -838,6 +1141,35 @@
         state.sports.push({ id: uid(), name: v, emoji: '🏅', months: ALL_MONTHS.slice() });
         settingsChanged(); break;
       }
+      case 'addMs': {
+        const name = document.getElementById('msName').value.trim();
+        const type = document.getElementById('msType').value;
+        const target = Math.round(Number(document.getElementById('msTarget').value));
+        const sport = MS_TYPES[type].sport ? document.getElementById('msSport').value : '';
+        const bonus = Math.max(0, Math.round(Number(document.getElementById('msBonus').value) || 0));
+        const prize = document.getElementById('msPrize').value.trim();
+        if (!(target > 0)) { toast('Enter a target number'); return; }
+        if (!bonus && !prize) { toast('Add bonus points or a prize'); return; }
+        const m = { id: uid(), name: name || '', type, target, sport, bonus, prize, start: todayKey(), achieved: null, given: false };
+        if (!m.name) m.name = milestoneText(m).replace(/^./, c => c.toUpperCase());
+        state.milestones.push(m); checkMilestones(); save(); toast('Milestone added'); break;
+      }
+      case 'delMs':
+        if (confirm('Delete this milestone? Bonus points it already gave will be removed too.')) { state.milestones = state.milestones.filter(m => m.id !== id); save(); }
+        break;
+      case 'msRestart': {
+        const m = state.milestones.find(x => x.id === id);
+        if (!m || !confirm('Start this milestone again from today? (Points already earned are kept.)')) return;
+        // Keep the earned one as a record and add a fresh copy.
+        state.milestones.push(Object.assign({}, m, { id: uid(), start: todayKey(), achieved: null, given: false }));
+        save(); break;
+      }
+      case 'msGiven': {
+        const m = state.milestones.find(x => x.id === id);
+        if (!m) return;
+        requireParent(() => { m.given = true; save(); render(); });
+        return;
+      }
       case 'delReward':
         if (confirm('Delete this reward?')) { state.rewards = state.rewards.filter(r => r.id !== id); save(); }
         break;
@@ -874,6 +1206,8 @@
   });
 
   $view.addEventListener('input', e => {
+    if (e.target.id === 'histQ') { hist.q = e.target.value; hist.limit = 60; renderHistResults(); return; }
+    if (e.target.dataset.af) { addForm[e.target.dataset.af] = e.target.value; return; }
     const f = e.target.dataset.ex;
     if (!f) return;
     extraForm[f] = f === 'min' ? Math.round(Number(e.target.value) || 0) : e.target.value;
@@ -935,6 +1269,7 @@
   setInterval(onWake, 60000);
 
   load();
+  checkMilestones(); save();
   render();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -191,3 +191,25 @@ textarea {
 .weeknav .date { text-align: center; font-weight: 700; }
 .weeknav .date small { display: block; font-weight: 500; color: var(--muted); }
 .tag { display: inline-block; font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); }
+.hero {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 14px;
+  border-radius: var(--radius); background: var(--card); border: 1px solid var(--line);
+}
+.hero.hot { background: linear-gradient(135deg, #f97316, #eab308); color: #fff; border-color: transparent; }
+.hero-num { font-size: 2.2rem; font-weight: 900; white-space: nowrap; }
+.hero-title { font-weight: 800; font-size: 1.1rem; }
+.filters { display: flex; flex-direction: column; gap: 8px; }
+.filters .chips { margin: 0; }
+.log-entry { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.log-entry .emoji { font-size: 1.4rem; }
+.log-entry .when { font-size: .78rem; color: var(--muted); }
+.log-entry .min { font-weight: 800; white-space: nowrap; }
+.log-entry .del { background: none; border: 0; color: var(--danger); font-size: 1rem; padding: 2px 6px; }
+.tag.extra { background: #fef3c7; color: #92400e; }
+.tag.practice { background: var(--good-soft); color: var(--good); }
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.ms { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.ms.won { border-color: var(--gold); background: rgba(234,179,8,.12); }
+.ms-top { display: flex; gap: 8px; align-items: baseline; }
+.ms-top b { flex: 1; }
+input[type=date] { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 9px; width: 100%; color: inherit; font: inherit; }

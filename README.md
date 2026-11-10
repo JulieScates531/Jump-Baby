@@ -5,9 +5,10 @@ It runs in any phone, tablet or computer browser. It has no accounts and no serv
 
 ## What it does
 
-- **Today:** a daily checklist of chores, plus training goals for each sport that's in season.
+- **Today:** a 🔥 **Perfect-day streak** at the top (days in a row with 100% of chores and training goals), plus a daily checklist of chores, plus training goals for each sport that's in season.
   - Tap a chore to check it off.
   - Track practice time with a **start/stop timer**, quick **+5 / +15** buttons, or a custom number of minutes.
+  - Team practice cards can record how long practice was (optional).
   - **Extra training:** he can log training he does on his own with **➕ Log extra training**. He picks a sport (or "Other" and types it in, like running), adds what he worked on, then enters the minutes or uses a timer.
   - Use the arrows to look at earlier days. Today and yesterday can be edited, so a forgotten check-off can be fixed. Older days are locked unless a parent unlocks the Parent tab.
 - **Points and rewards:**
@@ -17,7 +18,17 @@ It runs in any phone, tablet or computer browser. It has no accounts and no serv
   - **+2** for each extra training session of 10+ min, up to 3 a day. Extra time on a sport that already has a home goal that day counts toward that goal instead.
   - Streaks are counted for chores and for training, with a celebration when he hits 100%.
   - The Reward shop lets him spend points. If a PIN is set, a parent has to approve.
-- **History:** this week's points and minutes per sport, his extra-training log, and a 30-day log.
+- **History:** the full training log.
+  - Filter by period (this week, last week, this month, 30 or 90 days, all time), by sport, and by type (home training, extra, team practice). Search drills and notes.
+  - Summary totals, minutes by sport, a **minutes each week** table, and every entry with its drills and notes.
+  - Daily results, including perfect days.
+  - **➕ Add a training entry** to log something after the fact. He can add today or yesterday; a parent (Parent tab unlocked) can add any day.
+- **Milestones:** parents create bigger goals with a reward (bonus points and/or a prize). He sees progress bars on the Rewards tab. Bonus points are added automatically, and a parent marks prizes as given. Types:
+  - perfect-day streak
+  - total perfect days
+  - chore streak
+  - training streak
+  - training minutes, extra sessions or team practices (each for any sport or one sport)
 - **Parent tab** (can be protected with a PIN):
   - Edit chores and the days they appear.
   - Plan each week: team practice days, home training days, minutes and drills per sport.
