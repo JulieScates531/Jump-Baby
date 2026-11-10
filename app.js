@@ -29,7 +29,7 @@
   // ---------- default data ----------
   function defaults() {
     return {
-      version: 1,
+      version: 2,
       kidName: '',
       pin: '',
       points: { chores: 10, training: 10, perfectDay: 5 },
@@ -43,8 +43,8 @@
         { id: uid(), name: 'Tidy my room', days: [6] },
       ],
       sports: [
-        { id: 'soccer', name: 'Soccer', emoji: '⚽', goal: 20, days: ALL_DAYS.slice(), months: [3, 4, 5, 6, 8, 9, 10, 11] },
-        { id: 'baseball', name: 'Baseball', emoji: '⚾', goal: 20, days: ALL_DAYS.slice(), months: [3, 4, 5, 6, 7] },
+        { id: 'soccer', name: 'Soccer', emoji: '⚽', goal: 20, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
+        { id: 'baseball', name: 'Baseball', emoji: '⚾', goal: 20, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
         { id: 'karate', name: 'Karate', emoji: '🥋', goal: 15, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
         { id: 'basketball', name: 'Basketball', emoji: '🏀', goal: 20, days: ALL_DAYS.slice(), months: [12, 1, 2] },
       ],
@@ -70,6 +70,20 @@
       state = raw ? Object.assign(defaults(), JSON.parse(raw)) : defaults();
     } catch (e) {
       state = defaults();
+    }
+    migrate();
+  }
+  // v2: soccer and baseball became year-round goals. Only update them if the
+  // parent hasn't customized their seasons.
+  function migrate() {
+    if ((state.version || 1) < 2) {
+      const oldSeasons = { soccer: '3,4,5,6,8,9,10,11', baseball: '3,4,5,6,7' };
+      state.sports.forEach(s => {
+        if (oldSeasons[s.id] && s.months.join(',') === oldSeasons[s.id]) s.months = ALL_MONTHS.slice();
+      });
+      state.version = 2;
+      refreshTodayPlan();
+      save();
     }
   }
   function save() {

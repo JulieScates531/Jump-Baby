@@ -28,8 +28,8 @@ It runs in any phone, tablet or computer browser. It has no accounts and no serv
 
 | Sport | Daily goal | In season |
 |---|---|---|
-| ⚽ Soccer | 20 min | Mar–Jun, Aug–Nov |
-| ⚾ Baseball | 20 min | Mar–Jul |
+| ⚽ Soccer | 20 min | Year-round |
+| ⚾ Baseball | 20 min | Year-round |
 | 🥋 Karate | 15 min | Year-round |
 | 🏀 Basketball | 20 min | Dec–Feb (winter only) |
 
