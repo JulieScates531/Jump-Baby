@@ -19,19 +19,30 @@ It runs in any phone, tablet or computer browser. It has no accounts and no serv
 - **History:** this week's points and minutes per sport, plus a 30-day log.
 - **Parent tab** (can be protected with a PIN):
   - Edit chores and the days they appear.
-  - Edit sports: daily goal in minutes, practice days and in-season months.
+  - Plan each week: team practice days, home training days, minutes and drills per sport.
+- Set which months each sport is in season.
   - Edit rewards and their prices, and set the point values.
   - Give or take away bonus points.
   - Back up or restore the data.
 
-### Default sports seasons (all editable)
+### Weekly training plan (Parent tab)
 
-| Sport | Daily goal | In season |
-|---|---|---|
-| ⚽ Soccer | 20 min | Year-round |
-| ⚾ Baseball | 20 min | Year-round |
-| 🥋 Karate | 15 min | Year-round |
-| 🏀 Basketball | 20 min | Dec–Feb (winter only) |
+Each week, every sport has:
+- **Team practice days**, outside the house. On those days, checking "I went to practice" meets that sport's goal, so there's no home training for it.
+- **Home training days** and a **home goal** in minutes.
+- **Home drills**: what to work on. He sees this on his Today screen.
+
+A plan carries forward to later weeks until a week that has its own plan. Use ‹ › to move to a future week and change it ahead of time.
+
+Starting setup (karate is not tracked):
+
+| Sport | Season | Team practice | Home goal |
+|---|---|---|---|
+| ⚽ Soccer | Year-round | Mon/Wed/Sat; **Mon/Tue from week of Dec 7** | 20 min |
+| ⚾ Baseball | Year-round | (set in Parent tab) | 20 min |
+| 🏀 Basketball | Dec–Feb | (set in Parent tab) | 20 min |
+
+Example: on a soccer practice day, his home goals are baseball (and basketball in winter).
 
 ## Using it
 

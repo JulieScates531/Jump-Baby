@@ -26,10 +26,36 @@
     return (h ? h + ':' + pad(m) : m) + ':' + pad(sec);
   };
 
+  // Weeks start on Monday.
+  const weekStart = k => addDays(k, -((dateOf(k).getDay() + 6) % 7));
+  const MON_FIRST = [1, 2, 3, 4, 5, 6, 0];
+  const DRILL_IDEAS = {
+    soccer: 'Juggling, wall passes (both feet), dribbling through cones',
+    baseball: 'Tee swings, throwing & catching, ground balls',
+    basketball: 'Ball-handling drills, free throws, layups (both hands)',
+  };
+  const blankSportWeek = (goal, id) => ({ practice: [], home: ALL_DAYS.slice(), goal: goal == null ? 15 : goal, drills: DRILL_IDEAS[id] || '' });
+  // Current team schedule: soccer Mon/Wed/Sat now, Mon/Tue from the week of Dec 7, 2026.
+  function starterWeeks(goals) {
+    const thisWeek = weekStart(todayKey());
+    const first = thisWeek < '2026-11-09' ? thisWeek : '2026-11-09';
+    const wk = {};
+    Object.keys(goals).forEach(id => { wk[id] = blankSportWeek(goals[id], id); });
+    if (wk.soccer) wk.soccer.practice = [1, 3, 6];
+    const weeks = { [first]: wk };
+    const dec7 = '2026-12-07';
+    if (wk.soccer) {
+      const next = JSON.parse(JSON.stringify(wk));
+      next.soccer.practice = [1, 2];
+      weeks[dec7] = next;
+    }
+    return weeks;
+  }
+
   // ---------- default data ----------
   function defaults() {
     return {
-      version: 2,
+      version: 3,
       kidName: '',
       pin: '',
       points: { chores: 10, training: 10, perfectDay: 5 },
@@ -43,11 +69,14 @@
         { id: uid(), name: 'Tidy my room', days: [6] },
       ],
       sports: [
-        { id: 'soccer', name: 'Soccer', emoji: '⚽', goal: 20, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
-        { id: 'baseball', name: 'Baseball', emoji: '⚾', goal: 20, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
-        { id: 'karate', name: 'Karate', emoji: '🥋', goal: 15, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() },
-        { id: 'basketball', name: 'Basketball', emoji: '🏀', goal: 20, days: ALL_DAYS.slice(), months: [12, 1, 2] },
+        { id: 'soccer', name: 'Soccer', emoji: '⚽', months: ALL_MONTHS.slice() },
+        { id: 'baseball', name: 'Baseball', emoji: '⚾', months: ALL_MONTHS.slice() },
+        { id: 'basketball', name: 'Basketball', emoji: '🏀', months: [12, 1, 2] },
       ],
+      // Weekly training plans, keyed by the Monday a plan starts. A plan stays in
+      // effect for every following week until a later week has its own plan.
+      // weeks[monday][sportId] = { practice:[dow], home:[dow], goal:min, drills:'' }
+      weeks: starterWeeks({ soccer: 20, baseball: 20, basketball: 20 }),
       rewards: [
         { id: uid(), name: '30 min extra screen time', cost: 30 },
         { id: uid(), name: 'Pick dinner', cost: 50 },
@@ -55,7 +84,7 @@
         { id: uid(), name: 'Stay up 30 min late', cost: 60 },
         { id: uid(), name: 'New sports gear', cost: 300 },
       ],
-      days: {},          // 'YYYY-MM-DD' -> { plan:{chores:[id], sports:[{id,goal}]}, chores:{id:true}, sessions:[{id,sport,min,ts}] }
+      days: {},          // 'YYYY-MM-DD' -> { plan:{chores:[id], sports:[{id,goal,practice,drills}]}, chores:{id:true}, practice:{sportId:true}, sessions:[{id,sport,min,ts}] }
       redemptions: [],   // {id, name, cost, date}
       timer: null,       // {sport, start, day}
       celebrated: {},    // 'YYYY-MM-DD' -> {chores:bool, training:bool}
@@ -82,6 +111,19 @@
         if (oldSeasons[s.id] && s.months.join(',') === oldSeasons[s.id]) s.months = ALL_MONTHS.slice();
       });
       state.version = 2;
+    }
+    // v3: weekly plans with team practice days; karate is no longer tracked.
+    if (state.version < 3) {
+      const goals = {};
+      state.sports = state.sports.filter(s => s.id !== 'karate');
+      state.sports.forEach(s => { goals[s.id] = s.goal == null ? 15 : s.goal; });
+      state.weeks = starterWeeks(goals);
+      Object.values(state.weeks).forEach(wk => state.sports.forEach(s => {
+        if (s.days) wk[s.id].home = s.days.slice();
+      }));
+      state.sports.forEach(s => { delete s.goal; delete s.days; });
+      if (state.timer && state.timer.sport === 'karate') state.timer = null;
+      state.version = 3;
       refreshTodayPlan();
       save();
     }
@@ -92,13 +134,43 @@
   }
 
   // ---------- plan / scoring ----------
+  // The plan in effect for the week containing day k (latest plan starting on/before it).
+  function weekPlanKey(k) {
+    const ws = weekStart(k);
+    const keys = Object.keys(state.weeks).sort();
+    let found = keys[0];
+    keys.forEach(x => { if (x <= ws) found = x; });
+    return found;
+  }
+  function sportWeek(k, sportId) {
+    const key = weekPlanKey(k);
+    return (key && state.weeks[key][sportId]) || blankSportWeek(15, sportId);
+  }
+  // Give week ws its own editable plan (copied from whatever was in effect).
+  function ensureWeek(ws) {
+    if (!state.weeks[ws]) {
+      const src = {};
+      state.sports.forEach(s => { src[s.id] = sportWeek(ws, s.id); });
+      state.weeks[ws] = JSON.parse(JSON.stringify(src));
+    }
+    state.sports.forEach(s => { if (!state.weeks[ws][s.id]) state.weeks[ws][s.id] = blankSportWeek(15, s.id); });
+    return state.weeks[ws];
+  }
   function planFor(k) {
     const d = dateOf(k), dow = d.getDay(), month = d.getMonth() + 1;
-    return {
-      chores: state.chores.filter(c => c.days.includes(dow)).map(c => c.id),
-      sports: state.sports.filter(s => s.goal > 0 && s.months.includes(month) && s.days.includes(dow))
-        .map(s => ({ id: s.id, goal: s.goal })),
-    };
+    const sports = [];
+    state.sports.filter(s => s.months.includes(month)).forEach(s => {
+      const w = sportWeek(k, s.id);
+      // Team practice outside the house replaces that sport's home goal for the day.
+      if (w.practice.includes(dow)) sports.push({ id: s.id, practice: true, goal: 0 });
+      else if (w.goal > 0 && w.home.includes(dow)) sports.push({ id: s.id, goal: w.goal, drills: w.drills || '' });
+    });
+    return { chores: state.chores.filter(c => c.days.includes(dow)).map(c => c.id), sports };
+  }
+  function sportMet(k, p) {
+    const d = state.days[k];
+    if (p.practice) return !!(d && d.practice && d.practice[p.id]);
+    return minutes(k, p.id) >= p.goal;
   }
   // Each day keeps a snapshot of its plan so changing settings later doesn't rewrite history.
   function day(k, create) {
@@ -114,7 +186,7 @@
     if (state.days[k]) state.days[k].plan = planFor(k);
   }
   const choreName = id => (state.chores.find(c => c.id === id) || {}).name || '(removed chore)';
-  const sportById = id => state.sports.find(s => s.id === id) || { id, name: id, emoji: '🏅', goal: 0 };
+  const sportById = id => state.sports.find(s => s.id === id) || { id, name: id.charAt(0).toUpperCase() + id.slice(1), emoji: '🏅' };
   function minutes(k, sportId) {
     const d = state.days[k];
     if (!d) return 0;
@@ -124,7 +196,7 @@
     const d = state.days[k];
     const plan = d ? d.plan : planFor(k);
     const choresDoneCount = d ? plan.chores.filter(id => d.chores[id]).length : 0;
-    const sportsDoneCount = plan.sports.filter(s => minutes(k, s.id) >= s.goal).length;
+    const sportsDoneCount = plan.sports.filter(p => sportMet(k, p)).length;
     const choresDone = plan.chores.length > 0 && choresDoneCount === plan.chores.length;
     const trainingDone = plan.sports.length > 0 && sportsDoneCount === plan.sports.length;
     let pts = 0;
@@ -160,6 +232,7 @@
   let tab = 'today';
   let viewDay = todayKey();
   let parentUnlocked = false;
+  let parentWeek = weekStart(todayKey());
   let timerTick = null;
 
   const $view = document.getElementById('view');
@@ -265,7 +338,7 @@
     const planned = st.plan.sports;
     html += `<section class="card"><h2>🏅 Training <span class="right">${fmtMin(st.totalMin)} today</span></h2>`;
     if (!planned.length) html += `<div class="empty">No training goals today.</div>`;
-    planned.forEach(p => { html += sportCard(k, sportById(p.id), p.goal, editable); });
+    planned.forEach(p => { html += p.practice ? practiceCard(k, sportById(p.id), editable) : sportCard(k, sportById(p.id), p.goal, editable, p.drills); });
     if (planned.length) {
       html += st.trainingDone
         ? `<div class="banner">🏆 All training goals met! You earned ${state.points.training} points!</div>`
@@ -284,7 +357,20 @@
     if (state.timer) startTick();
   }
 
-  function sportCard(k, s, goal, editable) {
+  // Team practice outside the house: checking it off meets that sport's goal for the day.
+  function practiceCard(k, s, editable) {
+    const d = state.days[k];
+    const went = !!(d && d.practice && d.practice[s.id]);
+    return `<div class="sport ${went ? 'done' : ''}">
+      <div class="sport-head"><span class="emoji">${esc(s.emoji)}</span>
+        <span class="name">${esc(s.name)} team practice ${went ? '✅' : ''}</span></div>
+      <p class="muted small" style="margin:6px 0">No home ${esc(s.name.toLowerCase())} training today. Going to practice counts as your goal!</p>
+      <button class="chore ${went ? 'checked' : ''}" data-act="practice" data-id="${s.id}" ${editable ? '' : 'disabled'} style="margin:0">
+        <span class="box">${went ? '✓' : ''}</span><span>I went to ${esc(s.name.toLowerCase())} practice</span></button>
+    </div>`;
+  }
+
+  function sportCard(k, s, goal, editable, drills) {
     const m = minutes(k, s.id);
     const done = goal > 0 && m >= goal;
     const pct = goal ? Math.min(100, Math.round(m / goal * 100)) : 0;
@@ -296,6 +382,7 @@
         <span class="name">${esc(s.name)} ${done ? '✅' : ''}</span>
         <span class="mins">${goal ? `${m} / ${goal} min` : `${m} min`}</span></div>
       ${goal ? `<div class="progress ${done ? 'done' : ''}"><div style="width:${pct}%"></div></div>` : ''}
+      ${drills ? `<div class="drills"><b>📋 Drills:</b> ${esc(drills)}</div>` : ''}
       ${running ? `<div class="timer" id="timerClock">0:00</div>` : ''}
       ${editable ? `<div class="actions">
         ${running
@@ -361,7 +448,7 @@
   function renderHistory() {
     const t = todayKey();
     // This week (Sunday start) totals per sport
-    const start = addDays(t, -dateOf(t).getDay());
+    const start = weekStart(t);
     const weekTotals = {};
     let weekPts = 0, weekChoreDays = 0, weekTrainDays = 0;
     for (let k = start; k <= t; k = addDays(k, 1)) {
@@ -422,6 +509,8 @@
       ${parentUnlocked && state.pin ? `<button class="btn" data-act="lock">🔒 Lock parent area</button>` : ''}
     </section>
 
+    ${weeklyPlanHtml(chips)}
+
     <section class="card"><h2>⭐ Points</h2>
       <div class="row">
         <div class="field grow"><label>100% chores</label><input type="number" min="0" data-points="chores" value="${state.points.chores}"></div>
@@ -440,17 +529,14 @@
       <div class="row"><input type="text" class="grow" id="newChore" placeholder="New chore…"><button class="btn primary" data-act="addChore">Add</button></div>
     </section>
 
-    <section class="card"><h2>🏅 Sports & training goals</h2>
-      <p class="muted small">Set the daily practice goal (minutes), which days, and which months the sport is in season. Set the goal to 0 to turn a goal off. Off-season sports can still be logged as extra practice.</p>
+    <section class="card"><h2>🏅 Sports & seasons</h2>
+      <p class="muted small">Pick the months each sport is in season. Out-of-season sports have no goals but can still be logged as extra practice.</p>
       ${state.sports.map(s => `<div class="editor-item">
         <div class="row">
           <input type="text" class="emoji-in" data-sport-field="emoji" data-id="${s.id}" value="${esc(s.emoji)}" aria-label="Emoji">
           <input type="text" class="grow" data-sport-field="name" data-id="${s.id}" value="${esc(s.name)}" aria-label="Sport name">
-          <input type="number" class="num" min="0" data-sport-field="goal" data-id="${s.id}" value="${s.goal}" aria-label="Daily goal minutes">
-          <span class="muted small">min</span>
           <button class="btn danger" data-act="delSport" data-id="${s.id}" aria-label="Delete">🗑</button>
         </div>
-        <div class="muted small" style="margin-top:8px">Days</div>${chips(s.days, ALL_DAYS, DOW1, 'sportDay', s.id)}
         <div class="muted small" style="margin-top:8px">In season</div>${chips(s.months, ALL_MONTHS, MONTHS, 'sportMonth', s.id)}
       </div>`).join('')}
       <div class="row"><input type="text" class="grow" id="newSport" placeholder="New sport…"><button class="btn primary" data-act="addSport">Add</button></div>
@@ -481,6 +567,45 @@
       </div>
     </section>`;
     $view.innerHTML = html;
+  }
+
+  function weeklyPlanHtml(chips) {
+    const ws = parentWeek;
+    const own = !!state.weeks[ws];
+    const keys = Object.keys(state.weeks).sort();
+    const srcKey = weekPlanKey(ws);
+    const short = k => dateOf(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const monthsThisWeek = new Set([0, 6].map(i => dateOf(addDays(ws, i)).getMonth() + 1));
+    const dayChips = (arr, act, id) => chips(arr, MON_FIRST, MON_FIRST.map(d => DOW[d].slice(0, 2)), act, id);
+    return `<section class="card"><h2>📅 Weekly training plan</h2>
+      <div class="weeknav">
+        <button class="iconbtn" data-act="weekPrev" aria-label="Previous week">‹</button>
+        <div class="date">Week of ${dateOf(ws).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+          <small>${short(ws)} – ${short(addDays(ws, 6))}${ws === weekStart(todayKey()) ? ' · this week' : ''}</small></div>
+        <button class="iconbtn" data-act="weekNext" aria-label="Next week">›</button>
+      </div>
+      <p style="text-align:center;margin:4px 0 10px">${own ? '<span class="tag">This week has its own plan</span>'
+        : `<span class="muted small">Using the plan from the week of ${short(srcKey)}. Any change here starts a new plan from this week.</span>`}</p>
+      <p class="muted small">On a <b>team practice</b> day, going to practice counts as that sport's goal, so there's no home training for it. Changes carry forward to later weeks until a week that has its own plan.</p>
+      ${state.sports.map(s => {
+        const w = sportWeek(ws, s.id);
+        const inSeason = s.months.some(m => monthsThisWeek.has(m));
+        return `<div class="editor-item">
+          <div class="row"><span style="font-size:1.4rem">${esc(s.emoji)}</span><b class="grow">${esc(s.name)}</b>
+            ${inSeason ? '' : '<span class="tag">off-season</span>'}</div>
+          <div class="muted small" style="margin-top:8px">🏟 Team practice days (outside the house)</div>${dayChips(w.practice, 'wkPractice', s.id)}
+          <div class="muted small" style="margin-top:8px">🏠 Home training days</div>${dayChips(w.home, 'wkHome', s.id)}
+          <div class="row" style="margin-top:8px"><span class="muted small">Home goal</span>
+            <input type="number" class="num" min="0" data-wk-field="goal" data-id="${s.id}" value="${w.goal}" aria-label="Home goal minutes">
+            <span class="muted small">min per day</span></div>
+          <div class="field" style="margin:8px 0 0"><label>Home drills / what to work on</label>
+            <textarea data-wk-field="drills" data-id="${s.id}" placeholder="e.g. 50 juggles, 10 min wall passes">${esc(w.drills || '')}</textarea></div>
+        </div>`;
+      }).join('')}
+      ${own && keys[0] !== ws ? `<button class="btn" data-act="wkReset">↩ Remove this week's plan (use the one before it)</button>` : ''}
+      ${keys.length > 1 || !own ? `<div class="muted small" style="margin-top:10px">Plan changes start on:</div><div class="chips">${keys.map(k =>
+        `<button class="chip ${k === ws ? 'on' : ''}" data-act="weekGo" data-v="${k}">${short(k)}</button>`).join('')}</div>` : ''}
+    </section>`;
   }
 
   function unlock() {
@@ -520,6 +645,12 @@
       case 'chore': {
         const d = day(k, true);
         if (d.chores[id]) delete d.chores[id]; else d.chores[id] = true;
+        save(); checkCelebrate(k); break;
+      }
+      case 'practice': {
+        const d = day(k, true);
+        d.practice = d.practice || {};
+        if (d.practice[id]) delete d.practice[id]; else d.practice[id] = true;
         save(); checkCelebrate(k); break;
       }
       case 'start':
@@ -566,7 +697,17 @@
         toast(v ? 'PIN saved' : 'PIN removed'); break;
       }
       case 'choreDay': toggle(state.chores.find(c => c.id === id).days, Number(el.dataset.v)); settingsChanged(); break;
-      case 'sportDay': toggle(state.sports.find(s => s.id === id).days, Number(el.dataset.v)); settingsChanged(); break;
+      case 'wkPractice': case 'wkHome': {
+        const w = ensureWeek(parentWeek)[id];
+        toggle(act === 'wkPractice' ? w.practice : w.home, Number(el.dataset.v));
+        settingsChanged(); break;
+      }
+      case 'weekPrev': parentWeek = addDays(parentWeek, -7); break;
+      case 'weekNext': parentWeek = addDays(parentWeek, 7); break;
+      case 'weekGo': parentWeek = el.dataset.v; break;
+      case 'wkReset':
+        if (confirm("Remove this week's plan? It will go back to the plan from the week before.")) { delete state.weeks[parentWeek]; settingsChanged(); }
+        break;
       case 'sportMonth': toggle(state.sports.find(s => s.id === id).months, Number(el.dataset.v)); settingsChanged(); break;
       case 'delChore':
         if (confirm('Delete this chore?')) { state.chores = state.chores.filter(c => c.id !== id); settingsChanged(); }
@@ -582,7 +723,7 @@
       case 'addSport': {
         const v = document.getElementById('newSport').value.trim();
         if (!v) return;
-        state.sports.push({ id: uid(), name: v, emoji: '🏅', goal: 15, days: ALL_DAYS.slice(), months: ALL_MONTHS.slice() });
+        state.sports.push({ id: uid(), name: v, emoji: '🏅', months: ALL_MONTHS.slice() });
         settingsChanged(); break;
       }
       case 'delReward':
@@ -644,9 +785,14 @@
     if (el.dataset.sportField) {
       const s = state.sports.find(x => x.id === el.dataset.id), f = el.dataset.sportField;
       if (!s) return;
-      if (f === 'goal') s.goal = Math.max(0, Math.round(Number(el.value) || 0));
-      else if (el.value.trim()) s[f] = el.value.trim();
-      settingsChanged(); return;
+      if (el.value.trim()) s[f] = el.value.trim();
+      settingsChanged(); render(); return;
+    }
+    if (el.dataset.wkField) {
+      const w = ensureWeek(parentWeek)[el.dataset.id];
+      if (el.dataset.wkField === 'goal') w.goal = Math.max(0, Math.round(Number(el.value) || 0));
+      else w.drills = el.value.trim();
+      settingsChanged(); render(); return;
     }
     if (el.dataset.rewardField) {
       const r = state.rewards.find(x => x.id === el.dataset.id), f = el.dataset.rewardField;
